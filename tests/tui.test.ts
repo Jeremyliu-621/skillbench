@@ -105,7 +105,7 @@ describe('bigText', () => {
 describe('mascot', () => {
   it('renders half-block rows of a consistent width', () => {
     const rows = mascot();
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(6);
     expect(rows.every((r) => r.length === 14)).toBe(true);
   });
 });

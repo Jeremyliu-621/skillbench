@@ -22,15 +22,15 @@ export const c = {
   yellow: style('33'),
   cyan: style('36'),
   gray: style('90'),
-  // True-color Claude-orange (#D97757) with a darker shade for shadows/dim accents;
+  // True-color violet brand (#8B5CF6) with a darker shade for shadows/dim accents;
   // on a non-truecolor terminal the sequence is ignored and text renders plain.
-  brand: style('38;2;217;119;87'),
-  brandDim: style('38;2;150;82;60'),
+  brand: style('38;2;139;92;246'),
+  brandDim: style('38;2;109;79;196'),
   blue: style('38;5;75'),
 };
 
-/** rgb triples used by the pixel mascot. */
-export const RGB = { body: '217;119;87', bodyDark: '176;92;66', eye: '38;38;46' };
+/** rgb triples used by the pixel mascot (violet robot: body, dark openings, glowing eyes). */
+export const RGB = { body: '139;92;246', dark: '30;30;40', glow: '125;211;252' };
 
 /**
  * One half-block cell for pixel art: the character occupies the top and bottom

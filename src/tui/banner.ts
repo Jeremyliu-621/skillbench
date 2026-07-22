@@ -75,24 +75,27 @@ export function banner(): string {
   return ['', welcome, '', wordmark, '', '  ' + c.dim('Does your codebase beat a zero-shot LLM? Let’s find out.'), ''].join('\n');
 }
 
-// A little pixel critter, drawn with half-blocks (2 sprite rows per text row).
+// A little robot, drawn with half-blocks (2 sprite rows per text row):
+// O = body, E = glowing eye, X = dark opening (mouth slot), '.' = transparent.
 const SPRITE = [
-  '....OOOOOO....',
+  '.....OOOO.....',
+  '......OO......',
   '..OOOOOOOOOO..',
   '.OOOOOOOOOOOO.',
+  '.OEEOOOOOOEEO.',
+  '.OEEOOOOOOEEO.',
   '.OOOOOOOOOOOO.',
-  '.OOXXOOOOXXOO.',
-  '.OOXXOOOOXXOO.',
+  '.OOXXXXXXXXOO.',
   '.OOOOOOOOOOOO.',
   '..OOOOOOOOOO..',
-  '...O..OO..O...',
-  '...O..OO..O...',
+  '...O......O...',
+  '...O......O...',
 ];
 
-/** Render the mascot as colored half-block rows (5 text rows, 14 columns). */
+/** Render the mascot as colored half-block rows (6 text rows, 14 columns). */
 export function mascot(): string[] {
   const colorOf = (ch: string | undefined): string | null =>
-    ch === 'O' ? RGB.body : ch === 'X' ? RGB.eye : null;
+    ch === 'O' ? RGB.body : ch === 'E' ? RGB.glow : ch === 'X' ? RGB.dark : null;
   const rows: string[] = [];
   for (let r = 0; r < SPRITE.length; r += 2) {
     const top = SPRITE[r]!;
