@@ -69,8 +69,10 @@ class LineReader {
   private queue: string[] = [];
   private pending: ((v: string | null) => void) | null = null;
   private closed = false;
+  private rl: Interface;
 
   constructor(rl: Interface) {
+    this.rl = rl;
     rl.on('line', (line: string) => {
       if (this.pending) {
         const resolve = this.pending;
@@ -95,7 +97,14 @@ class LineReader {
   async next(promptStr: string): Promise<string | null> {
     if (this.queue.length > 0) return this.queue.shift()!;
     if (this.closed) return null;
-    stdout.write(promptStr);
+    // On a TTY, let readline own the prompt so it redraws correctly while editing
+    // (backspace, arrows). A raw write would be erased by readline's line refresh.
+    if (stdout.isTTY) {
+      this.rl.setPrompt(promptStr);
+      this.rl.prompt();
+    } else {
+      stdout.write(promptStr);
+    }
     return new Promise<string | null>((resolve) => {
       this.pending = resolve;
     });
