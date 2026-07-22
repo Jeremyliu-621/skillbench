@@ -22,11 +22,36 @@ export const c = {
   yellow: style('33'),
   cyan: style('36'),
   gray: style('90'),
-  // 256-color brand tones (warm amber), with graceful fallbacks handled by the terminal.
-  brand: style('38;5;209'),
-  brandDim: style('38;5;173'),
+  // True-color Claude-orange (#D97757) with a darker shade for shadows/dim accents;
+  // on a non-truecolor terminal the sequence is ignored and text renders plain.
+  brand: style('38;2;217;119;87'),
+  brandDim: style('38;2;150;82;60'),
   blue: style('38;5;75'),
 };
+
+/** rgb triples used by the pixel mascot. */
+export const RGB = { body: '217;119;87', bodyDark: '176;92;66', eye: '38;38;46' };
+
+/**
+ * One half-block cell for pixel art: the character occupies the top and bottom
+ * half of the cell independently, so a sprite row-pair renders in one text row.
+ * top/bot are "r;g;b" strings, or null for transparent (shows the terminal bg).
+ */
+export function halfCell(top: string | null, bot: string | null): string {
+  if (!colorEnabled) return top && bot ? '█' : top ? '▀' : bot ? '▄' : ' ';
+  if (top && bot) return `\x1b[38;2;${top};48;2;${bot}m▀\x1b[0m`;
+  if (top) return `\x1b[38;2;${top}m▀\x1b[0m`;
+  if (bot) return `\x1b[38;2;${bot}m▄\x1b[0m`;
+  return ' ';
+}
+
+/** Center a possibly-colored string within `width` visible columns. */
+export function centerVisible(s: string, width: number): string {
+  const gap = width - visibleWidth(s);
+  if (gap <= 0) return s;
+  const left = Math.floor(gap / 2);
+  return ' '.repeat(left) + s + ' '.repeat(gap - left);
+}
 
 const ANSI = /\x1b\[[0-9;]*m/g;
 

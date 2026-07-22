@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bar, dimensionBars, renderResultCharts, sparkline, upliftGauge, signed } from '../src/tui/charts.js';
-import { bigText } from '../src/tui/banner.js';
+import { bigText, mascot, welcomeScreen } from '../src/tui/banner.js';
 import { spinnerFrame } from '../src/tui/spinner.js';
 import { availableCharts, drawChart, resultDigest, type LastResult } from '../src/tui/result-context.js';
 import type { RunResult } from '../src/types.js';
@@ -99,6 +99,41 @@ describe('bigText', () => {
     // all rows are the same visible width (aligned glyphs + shadow)
     const widths = new Set(rows.map((r) => r.length));
     expect(widths.size).toBe(1);
+  });
+});
+
+describe('mascot', () => {
+  it('renders half-block rows of a consistent width', () => {
+    const rows = mascot();
+    expect(rows).toHaveLength(5);
+    expect(rows.every((r) => r.length === 14)).toBe(true);
+  });
+});
+
+describe('welcomeScreen', () => {
+  it('renders a dashed two-panel dashboard with title, activity, and commands', () => {
+    const out = welcomeScreen({
+      version: '0.1.0',
+      cwd: '/x/y',
+      engine: 'Codex • local',
+      recent: [{ ago: '2m ago', text: 'acme/erp +42%' }],
+      commands: [
+        { name: 'doctor', summary: 'Check the engine.' },
+        { name: 'score', summary: 'Grade a codebase.' },
+      ],
+    });
+    expect(out).toContain('2bench 0.1.0'); // title on the border
+    expect(out).toContain('Welcome to');
+    expect(out).toContain('Recent activity');
+    expect(out).toContain('2m ago');
+    expect(out).toContain('/doctor');
+    expect(out).toContain('Commands');
+    expect(out).toContain('┄'); // dashed border
+  });
+
+  it('handles an empty history gracefully', () => {
+    const out = welcomeScreen({ version: '0.1.0', cwd: '/x', engine: 'Codex • local', recent: [], commands: [] });
+    expect(out).toContain('no runs yet');
   });
 });
 

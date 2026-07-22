@@ -2,7 +2,7 @@
  * The startup banner: a block-letter wordmark + rounded frames, à la a polished
  * CLI. Pure string builders (no I/O) so they're testable and reusable.
  */
-import { c, visibleWidth, padVisible } from './colors.js';
+import { c, visibleWidth, padVisible, centerVisible, halfCell, RGB } from './colors.js';
 
 // 5-row block glyphs for the characters in "2BENCH". Each row is 5 columns.
 const GLYPHS: Record<string, string[]> = {
@@ -73,4 +73,88 @@ export function banner(): string {
     padX: 2,
   });
   return ['', welcome, '', wordmark, '', '  ' + c.dim('Does your codebase beat a zero-shot LLM? Let’s find out.'), ''].join('\n');
+}
+
+// A little pixel critter, drawn with half-blocks (2 sprite rows per text row).
+const SPRITE = [
+  '....OOOOOO....',
+  '..OOOOOOOOOO..',
+  '.OOOOOOOOOOOO.',
+  '.OOOOOOOOOOOO.',
+  '.OOXXOOOOXXOO.',
+  '.OOXXOOOOXXOO.',
+  '.OOOOOOOOOOOO.',
+  '..OOOOOOOOOO..',
+  '...O..OO..O...',
+  '...O..OO..O...',
+];
+
+/** Render the mascot as colored half-block rows (5 text rows, 14 columns). */
+export function mascot(): string[] {
+  const colorOf = (ch: string | undefined): string | null =>
+    ch === 'O' ? RGB.body : ch === 'X' ? RGB.eye : null;
+  const rows: string[] = [];
+  for (let r = 0; r < SPRITE.length; r += 2) {
+    const top = SPRITE[r]!;
+    const bot = SPRITE[r + 1] ?? '';
+    let line = '';
+    for (let col = 0; col < top.length; col++) line += halfCell(colorOf(top[col]), colorOf(bot[col]));
+    rows.push(line);
+  }
+  return rows;
+}
+
+export interface WelcomeData {
+  version: string;
+  cwd: string;
+  engine: string;
+  recent: { ago: string; text: string }[];
+  commands: { name: string; summary: string }[];
+}
+
+const trunc = (s: string, w: number): string => (s.length <= w ? s : '…' + s.slice(-(w - 1))); // keep the tail (paths)
+const truncHead = (s: string, w: number): string => (s.length <= w ? s : s.slice(0, w - 1) + '…'); // keep the head (prose)
+
+/** The dashed two-panel welcome dashboard (left: mascot + context, right: activity + commands). */
+export function welcomeScreen(data: WelcomeData): string {
+  const LEFTW = 30;
+  const RIGHTW = 40;
+
+  const left: string[] = [
+    '',
+    centerVisible('Welcome to ' + c.brand('2bench') + '!', LEFTW),
+    '',
+    ...mascot().map((row) => centerVisible(row, LEFTW)),
+    '',
+    centerVisible(c.dim(data.engine), LEFTW),
+    centerVisible(c.dim(trunc(data.cwd, LEFTW)), LEFTW),
+  ];
+
+  const right: string[] = [c.brand('Recent activity')];
+  if (data.recent.length === 0) {
+    right.push(c.dim('no runs yet — try /score .'));
+  } else {
+    for (const r of data.recent.slice(0, 4)) right.push(`${c.dim(r.ago.padEnd(7))} ${r.text}`);
+  }
+  right.push(c.dim('… /history for more'), c.brandDim('┄'.repeat(RIGHTW)), c.brand('Commands'));
+  for (const cmd of data.commands.slice(0, 4)) {
+    right.push(`${c.cyan(('/' + cmd.name).padEnd(10))} ${c.dim(truncHead(cmd.summary, RIGHTW - 12))}`);
+  }
+  right.push(c.dim('… /help for more'));
+
+  const inner = LEFTW + RIGHTW + 5; // between the outer corners
+  const title = c.brand(`2bench ${data.version}`);
+  const fill = Math.max(0, inner - 3 - visibleWidth(title) - 1);
+  const top = c.brandDim('┌┄┄ ') + title + c.brandDim(' ' + '┄'.repeat(fill) + '┐');
+  const bottom = c.brandDim('└' + '┄'.repeat(inner) + '┘');
+
+  const rows = Math.max(left.length, right.length);
+  const body: string[] = [];
+  for (let i = 0; i < rows; i++) {
+    const l = padVisible(left[i] ?? '', LEFTW);
+    const r = padVisible(right[i] ?? '', RIGHTW);
+    body.push(`${c.brandDim('┆')} ${l} ${c.brandDim('┆')} ${r} ${c.brandDim('┆')}`);
+  }
+
+  return ['', top, ...body, bottom].join('\n');
 }

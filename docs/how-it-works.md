@@ -143,6 +143,22 @@ Up to three sub-checks, whichever are available: **complexity** (how tangled the
 **Consistency — does it give the same result twice?**
 This one's a little different from the others. Your **delivered** code is a fixed thing — it doesn't change between runs, so it's perfectly consistent. The one really on trial here is the **plain AI**: remember it rebuilt the module several times back in Step 4. 2bench measures how much those rebuilds **varied** — both how similar the code is across the tries, and whether they *behave* the same (do they pass the same tests?). Lots of variation = low consistency. This captures something genuinely valuable about shipped software: it's the same every time, whereas re-prompting a plain AI is a roll of the dice.
 
+### The scanners, by name
+
+Most of those scores come from small, well-known tools doing one job each. Here's what every one actually is — and `2bench doctor` tells you which are installed on your machine:
+
+| Tool | What it is | What it checks | Feeds |
+|---|---|---|---|
+| **Complexity** (built-in) | 2bench's own analyzer, using the TypeScript compiler — always available | how tangled each file is, reported as the *share of code NOT sitting in over-complex files* | maintainability |
+| **jscpd** | the "JavaScript Copy/Paste Detector" | how much code is duplicated (copy-paste) | maintainability |
+| **ESLint** | the standard JavaScript/TypeScript linter | style and code-quality rule violations, per line | maintainability |
+| **Semgrep** | a pattern-based security scanner using OWASP/CWE rules | dangerous code patterns — injection, cross-site scripting, unsafe `eval`, etc. — each weighted by how serious its class is | security |
+| **gitleaks** | a secret scanner | hardcoded passwords, API keys, and tokens left in the code (any hit is flagged loudly) | security |
+| **the test harness** (built-in) | 2bench writes a test suite from the spec and runs it against both sides | whether the code actually *works* | correctness |
+| **Stryker** (on the roadmap) | a mutation tester | how good the *tests themselves* are — it breaks the code on purpose and checks whether a test notices | correctness (test quality) |
+
+Two things worth repeating from earlier: the **built-in** tools (complexity, the test harness) always run; the **external** ones are optional, and a missing one is marked **"not measured"**, never faked to zero (that's *degrade loudly*). Only Semgrep needs a network connection while it runs — it downloads its rule set from the registry.
+
 ---
 
 ## 7. The honesty problem (and how 2bench stays honest)

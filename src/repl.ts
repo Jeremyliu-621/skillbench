@@ -30,9 +30,9 @@ import { readHistory } from './history.js';
 import { serveDashboard, type ServeHandle } from './serve.js';
 import { runProcess } from './engine/proc.js';
 import { c } from './tui/colors.js';
-import { banner } from './tui/banner.js';
+import { welcomeScreen } from './tui/banner.js';
 import { Spinner } from './tui/spinner.js';
-import { renderResultCharts } from './tui/charts.js';
+import { renderResultCharts, signed } from './tui/charts.js';
 import { availableCharts, drawChart, resultDigest, type LastResult } from './tui/result-context.js';
 
 // ── parsing (pure, unit-tested) ────────────────────────────────────────────
@@ -144,8 +144,19 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
   const cwd = process.cwd();
   const baseCtx = { cwd, isGitRepo: existsSync(join(cwd, '.git')) };
 
-  stdout.write(banner() + '\n' + commandList() + '\n\n');
-  stdout.write(c.dim('  Tip: chatting sends a small request to Codex on your subscription.\n\n'));
+  const recent = await recentActivity(dirs);
+  stdout.write(
+    welcomeScreen({ version: '0.1.0', cwd, engine: 'Codex • local', recent, commands: [...COMMANDS] }) + '\n\n',
+  );
+  stdout.write(
+    '  ' +
+      c.dim('Type a command, or just talk to me. ') +
+      c.cyan('/help') +
+      c.dim(' · ') +
+      c.cyan('/quit') +
+      c.dim('  ·  chatting uses a small Codex request.') +
+      '\n\n',
+  );
 
   rl.on('SIGINT', () => rl.close());
 
@@ -369,6 +380,32 @@ function printRunOutput(
   }
   stdout.write(c.dim(`\n  Wrote ${jsonPath}\n  Wrote ${htmlPath}\n`));
   stdout.write('  ' + c.dim('Ask me to “explain that”, or open the dashboard: ') + c.cyan('/serve') + '\n');
+}
+
+/** The "Recent activity" panel: most-recent runs across the tracked out-dirs. */
+async function recentActivity(dirs: string[]): Promise<{ ago: string; text: string }[]> {
+  const all: { at: string; subjectName: string; uplift: number }[] = [];
+  for (const d of dirs) {
+    const entries = await readHistory(resolve(d)).catch(() => []);
+    for (const e of entries) all.push({ at: e.at, subjectName: e.subjectName, uplift: e.uplift });
+  }
+  all.sort((a, b) => (a.at < b.at ? 1 : -1));
+  return all.slice(0, 4).map((e) => ({
+    ago: relTime(e.at),
+    text: `${shortenName(e.subjectName).slice(0, 22)} ${signed(e.uplift)}`,
+  }));
+}
+
+function relTime(iso: string): string {
+  const secs = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))}m ago`;
+  if (secs < 86_400) return `${Math.round(secs / 3600)}h ago`;
+  return `${Math.round(secs / 86_400)}d ago`;
+}
+
+function shortenName(name: string): string {
+  const parts = name.split('/');
+  return parts.length > 1 ? '…/' + parts[parts.length - 1] : name;
 }
 
 async function runLinear(args: string[]): Promise<void> {
