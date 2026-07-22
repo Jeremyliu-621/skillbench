@@ -1,31 +1,39 @@
 /**
- * The interactive agent — the friendly front door.
+ * The interactive agent — the friendly, graphical front door.
  *
- * `2bench` with no arguments lands here: a banner, the full command list, and a
- * chat prompt. You can either drive it precisely with slash-commands
- * (`/score .`) — which run immediately and, for the cheap ones, cost nothing —
- * or just talk to it in plain English, in which case the concierge (Codex)
- * answers and may PROPOSE a command that we run only after you say yes.
+ * `2bench` with no arguments lands here: a block-letter banner, the command
+ * list, and a chat prompt. You can drive it precisely with slash-commands
+ * (`/score .`) or just talk to it. Results are drawn as real charts (dimension
+ * bars, an uplift gauge, history sparklines), and you can ask the agent to
+ * "explain that" — it explains the last result in plain words and, when a
+ * picture helps, the app draws the matching chart from the real data.
  *
- * Design: explicit slash-commands are the power-user path and run as typed; the
- * agent's proposals always pass through a confirm gate, so a chat turn can never
- * silently kick off an expensive scoring run.
+ * Design held from before: explicit slash-commands run as typed; the agent's
+ * proposals always pass a confirm gate, so a chat turn can't kick off an
+ * expensive scoring run on its own.
  */
 import { createInterface, type Interface } from 'node:readline/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import { COMMANDS } from './agent/catalog.js';
 import {
   askConcierge,
   ConciergeError,
+  type ConciergeContext,
   type ConciergeEngine,
   type ConciergeReply,
   type ConciergeTurn,
 } from './agent/concierge.js';
 import { doctorReport, inventoryReport, historyReport, scoreRepo, benchSkill } from './commands.js';
+import { readHistory } from './history.js';
 import { serveDashboard, type ServeHandle } from './serve.js';
 import { runProcess } from './engine/proc.js';
+import { c } from './tui/colors.js';
+import { banner } from './tui/banner.js';
+import { Spinner } from './tui/spinner.js';
+import { renderResultCharts } from './tui/charts.js';
+import { availableCharts, drawChart, resultDigest, type LastResult } from './tui/result-context.js';
 
 // ── parsing (pure, unit-tested) ────────────────────────────────────────────
 
@@ -47,40 +55,70 @@ export function parseReplLine(line: string): ParsedLine {
   return { kind: 'chat', text: trimmed };
 }
 
-// ── colour (opt-out, TTY-only) ─────────────────────────────────────────────
+// ── input ──────────────────────────────────────────────────────────────────
 
-const useColor = Boolean(stdout.isTTY) && !process.env.NO_COLOR;
-const c = {
-  dim: (s: string) => (useColor ? `\x1b[2m${s}\x1b[0m` : s),
-  bold: (s: string) => (useColor ? `\x1b[1m${s}\x1b[0m` : s),
-  cyan: (s: string) => (useColor ? `\x1b[36m${s}\x1b[0m` : s),
-  green: (s: string) => (useColor ? `\x1b[32m${s}\x1b[0m` : s),
-  yellow: (s: string) => (useColor ? `\x1b[33m${s}\x1b[0m` : s),
-};
+/**
+ * A line reader that never drops input. `readline/promises` `question()` throws
+ * away buffered lines when the stream closes while an async handler is running
+ * (fine for interactive TTYs, but it loses lines from piped/scripted input). We
+ * queue every 'line' event ourselves, so buffered lines survive close and are
+ * returned in order; only once the queue is empty does a closed stream yield
+ * null (a clean end-of-session on Ctrl+C / Ctrl+D / EOF).
+ */
+class LineReader {
+  private queue: string[] = [];
+  private pending: ((v: string | null) => void) | null = null;
+  private closed = false;
 
-function banner(): string {
-  // No right-hand border, so colored content never has to line up with a column.
-  const rule = '  ' + '─'.repeat(56);
-  return [
-    '',
-    rule,
-    '   ' + c.bold(c.cyan('2 B E N C H')),
-    '   ' + c.dim('Does your codebase beat a zero-shot LLM?'),
-    rule,
-  ].join('\n');
+  constructor(rl: Interface) {
+    rl.on('line', (line: string) => {
+      if (this.pending) {
+        const resolve = this.pending;
+        this.pending = null;
+        resolve(line);
+      } else {
+        this.queue.push(line);
+      }
+    });
+    rl.on('close', () => {
+      this.closed = true;
+      if (this.pending) {
+        const resolve = this.pending;
+        this.pending = null;
+        resolve(null);
+      }
+    });
+  }
+
+  /** Next line, or null when input is exhausted. Writes `promptStr` only when it
+   *  actually has to wait (so buffered/piped lines don't each print a prompt). */
+  async next(promptStr: string): Promise<string | null> {
+    if (this.queue.length > 0) return this.queue.shift()!;
+    if (this.closed) return null;
+    stdout.write(promptStr);
+    return new Promise<string | null>((resolve) => {
+      this.pending = resolve;
+    });
+  }
 }
 
+// ── the command list shown at startup / on /help ───────────────────────────
+
 function commandList(): string {
-  const lines = [c.bold('  What I can do')];
-  for (const cmd of COMMANDS) {
+  const rows = COMMANDS.map((cmd) => {
     const tag = cmd.costly ? c.yellow(' (uses Codex)') : cmd.longLived ? c.dim(' (opens a page)') : '';
-    // Pad the plain label first, THEN colour the whole cell — exact alignment.
-    const label = c.cyan(('/' + cmd.name).padEnd(11));
-    lines.push(`    ${label} ${cmd.summary}${tag}`);
-  }
-  lines.push('');
-  lines.push('  ' + c.dim('Or just ask me a question in plain English. ') + c.cyan('/help') + c.dim(' · ') + c.cyan('/quit'));
-  return lines.join('\n');
+    return `  ${c.cyan(('/' + cmd.name).padEnd(11))} ${cmd.summary}${tag}`;
+  });
+  return [
+    c.bold('  Commands'),
+    ...rows,
+    '',
+    '  ' +
+      c.dim('Or just talk to me — ask what a command does, or say ') +
+      c.cyan('“explain that”') +
+      c.dim(' after a run and I’ll break it down, with a chart when it helps.'),
+    '  ' + c.cyan('/help') + c.dim('  ·  ') + c.cyan('/quit'),
+  ].join('\n');
 }
 
 // ── state ──────────────────────────────────────────────────────────────────
@@ -88,6 +126,7 @@ function commandList(): string {
 interface ReplState {
   history: ConciergeTurn[];
   server: ServeHandle | null;
+  last: LastResult;
 }
 
 export interface ReplOptions {
@@ -99,33 +138,28 @@ export interface ReplOptions {
 
 export async function startRepl(opts: ReplOptions = {}): Promise<void> {
   const rl = createInterface({ input: stdin, output: stdout });
-  const state: ReplState = { history: [], server: null };
+  const reader = new LineReader(rl);
+  const state: ReplState = { history: [], server: null, last: null };
   const dirs = opts.dirs ?? ['.2bench', '.2bench-skill'];
   const cwd = process.cwd();
-  const ctx = { cwd, isGitRepo: existsSync(join(cwd, '.git')) };
+  const baseCtx = { cwd, isGitRepo: existsSync(join(cwd, '.git')) };
 
-  stdout.write(banner() + '\n\n' + commandList() + '\n\n');
+  stdout.write(banner() + '\n' + commandList() + '\n\n');
   stdout.write(c.dim('  Tip: chatting sends a small request to Codex on your subscription.\n\n'));
 
-  let running = true;
-  rl.on('SIGINT', () => {
-    running = false;
-    rl.close();
-  });
+  rl.on('SIGINT', () => rl.close());
 
-  while (running) {
-    const line = await prompt(rl, c.green('  2bench ▸ '));
+  while (true) {
+    const line = await reader.next(c.green('  2bench ▸ '));
     if (line === null) break; // stream closed (Ctrl+C / Ctrl+D / EOF)
     const parsed = parseReplLine(line);
 
     if (parsed.kind === 'empty') continue;
     if (parsed.kind === 'chat') {
-      await handleChat(parsed.text, rl, state, ctx, dirs, opts.conciergeEngine);
+      await handleChat(parsed.text, reader, state, baseCtx, dirs, opts.conciergeEngine);
       continue;
     }
-
-    // slash command
-    const done = await handleSlash(parsed.command, parsed.args, rl, state, dirs);
+    const done = await handleSlash(parsed.command, parsed.args, reader, state, dirs);
     if (done) break;
   }
 
@@ -141,7 +175,7 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
 async function handleSlash(
   command: string,
   args: string[],
-  rl: Interface,
+  reader: LineReader,
   state: ReplState,
   dirs: string[],
 ): Promise<boolean> {
@@ -156,27 +190,27 @@ async function handleSlash(
       return false;
     case 'clear':
       state.history = [];
+      state.last = null;
       if (stdout.isTTY) stdout.write('\x1b[2J\x1b[H');
       stdout.write(c.dim('  Fresh start — conversation cleared.\n\n'));
       return false;
     case 'doctor':
-      await printResult(() => doctorReport());
+      await runText(() => doctorReport(), (text) => (state.last = { kind: 'doctor', text }));
       return false;
-    case 'inventory': {
-      const repo = args[0] ?? '.';
-      await printResult(() => inventoryReport(repo, {}));
+    case 'inventory':
+      await runText(
+        () => inventoryReport(args[0] ?? '.', {}),
+        (text) => (state.last = { kind: 'inventory', text }),
+      );
       return false;
-    }
-    case 'history': {
-      const dir = args[0] ?? dirs[0]!;
-      await printResult(() => historyReport(dir));
+    case 'history':
+      await runHistory(args[0] ?? dirs[0]!, state);
       return false;
-    }
     case 'score':
-      await runScore(args, rl, /* fromAgent */ false);
+      await runScore(args, reader, state, /* fromAgent */ false);
       return false;
     case 'skill':
-      await runSkill(args, rl, /* fromAgent */ false);
+      await runSkill(args, reader, state, /* fromAgent */ false);
       return false;
     case 'serve':
       await handleServe(args, state, dirs);
@@ -191,17 +225,25 @@ async function handleSlash(
 
 async function handleChat(
   text: string,
-  rl: Interface,
+  reader: LineReader,
   state: ReplState,
-  ctx: { cwd: string; isGitRepo: boolean },
+  baseCtx: { cwd: string; isGitRepo: boolean },
   dirs: string[],
   engine?: ConciergeEngine,
 ): Promise<void> {
-  stdout.write(c.dim('  (thinking…)\n'));
+  const ctx: ConciergeContext = {
+    ...baseCtx,
+    resultDigest: resultDigest(state.last),
+    availableCharts: availableCharts(state.last),
+  };
+
+  const spinner = new Spinner('thinking').start();
   let reply: ConciergeReply;
   try {
     reply = await askConcierge(text, state.history, ctx, engine);
+    spinner.clear();
   } catch (err) {
+    spinner.clear();
     const why = err instanceof ConciergeError ? err.message : String(err);
     stdout.write(
       c.yellow('  I couldn’t reach Codex just now') +
@@ -220,22 +262,28 @@ async function handleChat(
 
   stdout.write('\n  ' + reply.reply.replace(/\n/g, '\n  ') + '\n');
 
+  // Draw the chart the agent chose — but only from real data we actually have.
+  if (reply.chart !== 'none' && availableCharts(state.last).includes(reply.chart)) {
+    const drawn = drawChart(state.last, reply.chart);
+    if (drawn) stdout.write(drawn + '\n');
+  }
+
   if (reply.suggestion) {
     const { command, args, why } = reply.suggestion;
     const shown = `/${command}${args.length ? ' ' + args.join(' ') : ''}`;
     stdout.write('\n  ' + c.dim('Suggested: ') + c.cyan(shown) + (why ? c.dim('  — ' + why) : '') + '\n');
-    const ok = await confirm(rl, `  Run ${c.cyan(shown)} now?`, true);
+    const ok = await confirm(reader, `  Run ${c.cyan(shown)} now?`, true);
     if (ok) {
       stdout.write('\n');
-      if (command === 'score') await runScore(args, rl, true);
-      else if (command === 'skill') await runSkill(args, rl, true);
-      else await handleSlash(command, args, rl, state, dirs);
+      if (command === 'score') await runScore(args, reader, state, true);
+      else if (command === 'skill') await runSkill(args, reader, state, true);
+      else await handleSlash(command, args, reader, state, dirs);
     }
   }
   stdout.write('\n');
 }
 
-async function runScore(args: string[], rl: Interface, fromAgent: boolean): Promise<void> {
+async function runScore(args: string[], reader: LineReader, state: ReplState, fromAgent: boolean): Promise<void> {
   const positional = args.filter((a) => !a.startsWith('--'));
   const repo = positional[0] ?? '.';
   const offline = args.includes('--offline');
@@ -244,7 +292,7 @@ async function runScore(args: string[], rl: Interface, fromAgent: boolean): Prom
 
   if (fromAgent && !offline) {
     const ok = await confirm(
-      rl,
+      reader,
       c.yellow('  score runs the full pipeline and makes real Codex calls against your 5-hour window.') +
         `\n  Score ${c.cyan(repo)}?`,
       false,
@@ -254,21 +302,24 @@ async function runScore(args: string[], rl: Interface, fromAgent: boolean): Prom
       return;
     }
   }
+
+  const spinner = new Spinner(`scoring ${repo}…`).start();
   try {
-    const { summary, jsonPath, htmlPath } = await scoreRepo(repo, {
+    const { result, summary, jsonPath, htmlPath } = await scoreRepo(repo, {
       offline,
       specs,
-      onProgress: (m) => stdout.write('  ' + c.dim(m) + '\n'),
+      onProgress: (m) => spinner.setLabel(m),
     });
-    stdout.write(summary + '\n');
-    stdout.write(c.dim(`  Wrote ${jsonPath}\n  Wrote ${htmlPath}\n`));
-    stdout.write('  ' + c.dim('See it on the dashboard: ') + c.cyan('/serve') + '\n');
+    spinner.stop(c.green('✔'), `scored ${repo}`);
+    state.last = { kind: 'score', result };
+    printRunOutput(result, summary, jsonPath, htmlPath);
   } catch (err) {
+    spinner.fail(`scoring ${repo}`);
     stdout.write(c.yellow(`  Scoring failed: ${err instanceof Error ? err.message : String(err)}\n`));
   }
 }
 
-async function runSkill(args: string[], rl: Interface, fromAgent: boolean): Promise<void> {
+async function runSkill(args: string[], reader: LineReader, state: ReplState, fromAgent: boolean): Promise<void> {
   const bench = args.find((a) => !a.startsWith('--'));
   if (!bench) {
     stdout.write(c.yellow('  Which bench file? Try ') + c.cyan('/skill examples/tax-skill.bench.json') + '\n');
@@ -276,7 +327,7 @@ async function runSkill(args: string[], rl: Interface, fromAgent: boolean): Prom
   }
   if (fromAgent) {
     const ok = await confirm(
-      rl,
+      reader,
       c.yellow('  skill makes real Codex calls against your 5-hour window.') + `\n  Run the ${c.cyan(bench)} bench?`,
       false,
     );
@@ -285,14 +336,49 @@ async function runSkill(args: string[], rl: Interface, fromAgent: boolean): Prom
       return;
     }
   }
+
+  const spinner = new Spinner(`running ${bench}…`).start();
   try {
-    const { summary, jsonPath, htmlPath } = await benchSkill(bench, {
-      onProgress: (m) => stdout.write('  ' + c.dim(m) + '\n'),
+    const { result, summary, jsonPath, htmlPath } = await benchSkill(bench, {
+      onProgress: (m) => spinner.setLabel(m),
     });
-    stdout.write(summary + '\n');
-    stdout.write(c.dim(`  Wrote ${jsonPath}\n  Wrote ${htmlPath}\n`));
+    spinner.stop(c.green('✔'), `ran ${bench}`);
+    state.last = { kind: 'skill', result };
+    printRunOutput(result, summary, jsonPath, htmlPath);
   } catch (err) {
+    spinner.fail(`running ${bench}`);
     stdout.write(c.yellow(`  Skill bench failed: ${err instanceof Error ? err.message : String(err)}\n`));
+  }
+}
+
+/** After a score/skill run: charts if there's an uplift to show, else the text summary. */
+function printRunOutput(
+  result: Parameters<typeof renderResultCharts>[0],
+  summary: string,
+  jsonPath: string,
+  htmlPath: string,
+): void {
+  const hasUplift = result.outcomes.length > 0 || result.dimensions.some((d) => d.inUplift);
+  if (hasUplift) {
+    stdout.write('\n' + renderResultCharts(result) + '\n');
+  } else {
+    stdout.write('\n' + summary + '\n');
+  }
+  stdout.write(c.dim(`\n  Wrote ${jsonPath}\n  Wrote ${htmlPath}\n`));
+  stdout.write('  ' + c.dim('Ask me to “explain that”, or open the dashboard: ') + c.cyan('/serve') + '\n');
+}
+
+async function runHistory(dir: string, state: ReplState): Promise<void> {
+  try {
+    const entries = await readHistory(resolve(dir));
+    state.last = { kind: 'history', entries };
+    if (entries.length > 0) {
+      const spark = drawChart(state.last, 'history');
+      if (spark) stdout.write('\n' + spark + '\n');
+    }
+    stdout.write('\n' + (await historyReport(dir)) + '\n\n');
+  } catch (err) {
+    stdout.write(c.yellow(`  That didn’t work: ${err instanceof Error ? err.message : String(err)}\n\n`));
   }
 }
 
@@ -311,12 +397,13 @@ async function handleServe(args: string[], state: ReplState, dirs: string[]): Pr
     stdout.write('  Already serving → ' + c.cyan(state.server.url) + '\n\n');
     return;
   }
-  const serveDirs = (args.length ? args : dirs).map((d) => d);
+  const serveDirs = args.length ? args : dirs;
   try {
     state.server = await serveDashboard({ dirs: serveDirs, port: 4173 });
     stdout.write('\n  Portfolio dashboard → ' + c.cyan(state.server.url) + '\n');
-    stdout.write('  ' + c.dim('Loopback only — nothing is exposed to the network. ') + c.cyan('/serve stop') + c.dim(' to stop.\n\n'));
-    // Best-effort open in the default browser.
+    stdout.write(
+      '  ' + c.dim('Loopback only — nothing is exposed to the network. ') + c.cyan('/serve stop') + c.dim(' to stop.\n\n'),
+    );
     const opener = process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open';
     runProcess(opener, [state.server.url], { timeoutMs: 10_000 }).catch(() => {});
   } catch (err) {
@@ -324,29 +411,22 @@ async function handleServe(args: string[], state: ReplState, dirs: string[]): Pr
   }
 }
 
-async function printResult(run: () => Promise<string>): Promise<void> {
+/** Run a text-producing command, stash it as the last result, and print it. */
+async function runText(run: () => Promise<string>, stash: (text: string) => void): Promise<void> {
   try {
-    stdout.write('\n' + (await run()) + '\n\n');
+    const text = await run();
+    stash(text);
+    stdout.write('\n' + text + '\n\n');
   } catch (err) {
     stdout.write(c.yellow(`  That didn’t work: ${err instanceof Error ? err.message : String(err)}\n\n`));
   }
 }
 
-async function confirm(rl: Interface, question: string, defaultYes: boolean): Promise<boolean> {
+async function confirm(reader: LineReader, question: string, defaultYes: boolean): Promise<boolean> {
   const hint = defaultYes ? '[Y/n]' : '[y/N]';
-  const raw = await prompt(rl, `${question} ${c.dim(hint)} `);
+  const raw = await reader.next(`${question} ${c.dim(hint)} `);
   if (raw === null) return false; // stream closed → never fire off an action
   const answer = raw.trim().toLowerCase();
   if (!answer) return defaultYes;
   return answer === 'y' || answer === 'yes';
-}
-
-/** rl.question that resolves to null when the input stream closes, so a
- *  Ctrl+C / Ctrl+D / EOF ends the session cleanly instead of throwing. */
-async function prompt(rl: Interface, q: string): Promise<string | null> {
-  try {
-    return await rl.question(q);
-  } catch {
-    return null;
-  }
 }

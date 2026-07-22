@@ -15,11 +15,19 @@
 import { codexExec } from '../engine/codex.js';
 import { COMMANDS, COMMAND_NAMES } from './catalog.js';
 
+/** Charts the REPL can draw from a command's structured result (LLM never draws ASCII itself). */
+export const CHART_NAMES = ['result', 'dimensions', 'uplift', 'winrate', 'history'] as const;
+export type ChartName = (typeof CHART_NAMES)[number];
+
 export interface ConciergeContext {
   /** Where the user launched the agent — the natural default repo to score. */
   cwd: string;
   /** Whether cwd is a git repo (a hint that "score this" means cwd). */
   isGitRepo: boolean;
+  /** Compact summary of the last command's result, so the agent can explain it. */
+  resultDigest?: string | null;
+  /** Chart names the app can actually draw from that result right now (a subset of CHART_NAMES). */
+  availableCharts?: readonly string[];
 }
 
 export interface ConciergeTurn {
@@ -37,6 +45,8 @@ export interface ConciergeReply {
   reply: string;
   /** A command to offer the user, or null when the turn is purely conversational. */
   suggestion: CommandSuggestion | null;
+  /** A chart to draw beneath the reply (from real data), or 'none'. */
+  chart: string;
 }
 
 /** Injectable transport. Returns Codex's schema-constrained final message (JSON text). */
@@ -54,8 +64,14 @@ export class ConciergeError extends Error {
 const REPLY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['reply', 'suggestion'],
+  required: ['reply', 'suggestion', 'chart'],
   properties: {
+    chart: {
+      type: 'string',
+      enum: ['none', ...CHART_NAMES],
+      description:
+        'A chart to draw beneath your reply when a picture helps explain the last result — but ONLY a name listed as available in the prompt. Otherwise "none". The app draws it from real data; you never draw ASCII charts yourself.',
+    },
     reply: {
       type: 'string',
       description: 'A short, warm, plain-language answer for the user. A few sentences at most.',
@@ -105,6 +121,18 @@ export function buildConciergePrompt(
     .map((t) => `${t.role === 'user' ? 'User' : 'You'}: ${t.content}`)
     .join('\n');
 
+  const chartDesc: Record<string, string> = {
+    result: 'full breakdown — dimension bars + the uplift gauge',
+    dimensions: 'per-dimension bars (your code vs the zero-shot rebuild)',
+    uplift: 'the uplift gauge against the 40% gate',
+    winrate: 'the head-to-head win-rate bar',
+    history: 'the uplift-over-time sparkline',
+  };
+  const avail = ctx.availableCharts ?? [];
+  const chartsBlock = avail.length
+    ? avail.map((n) => `  - ${n}: ${chartDesc[n] ?? ''}`).join('\n')
+    : '  (no chart is available for the last result — use "none")';
+
   return [
     'You are the concierge for 2bench — a friendly guide inside its terminal app.',
     'You help a newcomer understand and use the tool, in warm, plain language. No jargon dumps.',
@@ -126,12 +154,21 @@ export function buildConciergePrompt(
     `  Working directory: ${ctx.cwd}`,
     `  Is a git repo: ${ctx.isGitRepo ? 'yes' : 'no'} (if they say "this repo"/"here", that means ".")`,
     '',
+    "THE USER'S LAST COMMAND RESULT (they may ask you to explain it):",
+    ctx.resultDigest ? ctx.resultDigest : '  (nothing has been run yet)',
+    '',
+    'CHARTS YOU CAN DRAW (set "chart" to one when a picture helps explain the result):',
+    chartsBlock,
+    '',
     'HOW TO RESPOND:',
     '  - Keep "reply" short and human. Answer the actual question first.',
-    '  - You cannot run anything or see command output. If the user clearly wants to DO',
-    '    something a command covers, put it in "suggestion" and the app will offer to run',
-    '    it after they confirm. Otherwise set "suggestion" to null.',
-    '  - Never invent results, scores, or numbers — you have not run anything.',
+    '  - You cannot run anything or see raw command output beyond the result summary above.',
+    '    If the user clearly wants to DO something a command covers, put it in "suggestion"',
+    '    and the app will offer to run it after they confirm. Otherwise set "suggestion" to null.',
+    '  - If they ask you to explain the last result, explain it in plain words from the summary',
+    '    above, and set "chart" to one of the AVAILABLE names when a diagram helps (else "none").',
+    '    NEVER put ASCII art or charts in "reply" — the app draws the chart from real data.',
+    '  - Never invent results, scores, or numbers — rely only on the summary above.',
     '  - "score" and "skill" make real Codex calls against the user\'s 5-hour usage window;',
     '    mention that briefly when you suggest one.',
     '  - Prefer suggesting "doctor" or "inventory ." for a nervous newcomer before a full score.',
@@ -163,7 +200,12 @@ export function normalizeReply(raw: unknown): ConciergeReply {
     }
     // command not in the catalog → silently drop the suggestion (never execute unknowns)
   }
-  return { reply, suggestion };
+
+  // Chart choice; the REPL still validates it against what's actually drawable now.
+  const chart =
+    typeof obj.chart === 'string' && (CHART_NAMES as readonly string[]).includes(obj.chart) ? obj.chart : 'none';
+
+  return { reply, suggestion, chart };
 }
 
 export async function askConcierge(

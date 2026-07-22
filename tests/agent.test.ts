@@ -123,5 +123,32 @@ describe('askConcierge (fake engine — no Codex)', () => {
     await askConcierge('hello', [], ctx, engine);
     expect(seenSchema).not.toBeNull();
     expect(JSON.stringify(seenSchema)).toContain('suggestion');
+    expect(JSON.stringify(seenSchema)).toContain('chart');
+  });
+});
+
+describe('normalizeReply — chart selection', () => {
+  it('keeps a valid chart name', () => {
+    const r = normalizeReply({ reply: 'here is the breakdown', suggestion: null, chart: 'uplift' });
+    expect(r.chart).toBe('uplift');
+  });
+  it('defaults an unknown or missing chart to "none"', () => {
+    expect(normalizeReply({ reply: 'ok', suggestion: null, chart: 'bogus' }).chart).toBe('none');
+    expect(normalizeReply({ reply: 'ok', suggestion: null }).chart).toBe('none');
+    expect(normalizeReply({ reply: 'ok', suggestion: null, chart: 'none' }).chart).toBe('none');
+  });
+});
+
+describe('buildConciergePrompt — result context', () => {
+  it('embeds the last-result digest and the available charts', () => {
+    const prompt = buildConciergePrompt('explain that', [], {
+      cwd: '/r',
+      isGitRepo: true,
+      resultDigest: '  uplift +23% (95% CI ...)',
+      availableCharts: ['result', 'uplift'],
+    });
+    expect(prompt).toContain('uplift +23%');
+    expect(prompt).toContain('result:');
+    expect(prompt).toContain('uplift:');
   });
 });
