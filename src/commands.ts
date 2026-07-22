@@ -44,9 +44,9 @@ export async function doctorReport(): Promise<string> {
   }
   lines.push(
     '\nOptional scanners install with:\n' +
-      '  npm i -g jscpd eslint            # duplication, lint (npx-resolvable)\n' +
-      '  pipx install semgrep             # security (OWASP/CWE)\n' +
-      '  https://github.com/gitleaks/gitleaks/releases   # secret detection',
+      '  npm i -D eslint jscpd                     # lint, duplication (npx-resolvable)\n' +
+      '  pip install semgrep                       # security (OWASP/CWE) — runs natively on Windows\n' +
+      '  winget install Gitleaks.Gitleaks          # secret detection (or GitHub releases)',
   );
   return lines.join('\n');
 }
