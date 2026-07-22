@@ -91,11 +91,12 @@ describe('renderResultCharts', () => {
 });
 
 describe('bigText', () => {
-  it('renders 5 rows of block glyphs', () => {
+  it('renders block glyphs with a drop-shadow row', () => {
     const rows = bigText('2BENCH');
-    expect(rows).toHaveLength(5);
-    expect(rows.every((r) => r.includes('█'))).toBe(true);
-    // all rows are the same visible width (aligned glyphs)
+    expect(rows).toHaveLength(6); // 5 face rows + 1 shadow row
+    expect(rows[0]!.includes('█')).toBe(true); // bright face blocks
+    expect(rows[5]!.includes('▒')).toBe(true); // the drop shadow, shaded
+    // all rows are the same visible width (aligned glyphs + shadow)
     const widths = new Set(rows.map((r) => r.length));
     expect(widths.size).toBe(1);
   });
