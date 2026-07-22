@@ -1,0 +1,22 @@
+{
+  "$comment": "Example skill benchmark. Run: npm run dev -- skill examples/tax-skill.bench.json  — every task is run twice through the same model, once with `skill` prepended and once without; the skill text is the only difference between the arms.",
+  "name": "Canadian tax module skill",
+  "skill": "You are generating Node.js/TypeScript backend modules for a custom ERP.\n\nHouse rules — follow all of them:\n- A province can levy MULTIPLE taxes (GST + PST). Always return an array of tax objects, never a single combined rate.\n- Round each tax line independently to 2 decimals, then sum. Never sum unrounded rates.\n- Validate every input at the boundary: reject negative amounts and unknown provinces with a descriptive Error naming the offending value.\n- Export explicit TypeScript interfaces for every public shape.\n- No hardcoded secrets, no external dependencies, no console output from library code.",
+  "tasks": [
+    {
+      "id": "tax-rates",
+      "outputKind": "code",
+      "prompt": "Write a module that returns the applicable sales-tax rates for a Canadian province (support ON, BC, AB, QC) and computes the tax owed on an amount, returning a per-tax breakdown plus subtotal, total tax, and grand total."
+    },
+    {
+      "id": "quote-pricing",
+      "outputKind": "code",
+      "prompt": "Write a module that prices a quote: given a list of line items (description, quantity, unit price) and a province, compute per-line subtotals, an optional percentage discount applied before tax, the sales tax, and the final total."
+    },
+    {
+      "id": "invoice-format",
+      "outputKind": "code",
+      "prompt": "Write a module that formats a computed quote into a plain-text invoice summary suitable for emailing to a customer, showing each line item, the discount if any, each tax line, and the grand total."
+    }
+  ]
+}

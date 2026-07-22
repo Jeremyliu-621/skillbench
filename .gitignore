@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.2bench/
+.2bench-skill/
+dashboard.html
+*.log
+*.tsbuildinfo
+
+# Confidential / local-only — client material must never be published
+*.pdf

@@ -1,0 +1,36 @@
+{
+  "name": "2bench",
+  "version": "0.1.0",
+  "description": "Scores a codebase against a pure-LLM baseline: how much better is it than what a zero-shot LLM would have produced?",
+  "type": "module",
+  "//private": "Internal tool: the repo carries client-derived material (meeting notes), so publishing to the public registry is blocked deliberately. Flip to false only after auditing what `npm pack` includes.",
+  "private": true,
+  "bin": {
+    "2bench": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "2bench.config.json",
+    "examples",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "tsx": "^4.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.10"
+  }
+}

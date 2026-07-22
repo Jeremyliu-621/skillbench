@@ -1,0 +1,32 @@
+{
+  "$comment": "Default 2bench configuration. Weights/threshold are always printed in reports — transparency is part of the methodology (docs/research-report.md §2.6).",
+  "gate": {
+    "upliftThreshold": 0.4,
+    "note": "Pass iff the LOWER bound of the uplift confidence interval clears the threshold (never the point estimate)."
+  },
+  "weights": {
+    "correctness": 0.4,
+    "security": 0.25,
+    "maintainability": 0.2,
+    "consistency": 0.15
+  },
+  "sampling": {
+    "minModules": 10,
+    "maxModules": 30,
+    "seed": 42
+  },
+  "baseline": {
+    "samplesPerSpec": 3,
+    "promptParaphrases": 2,
+    "model": null
+  },
+  "judge": {
+    "reasoningEffort": "high",
+    "positionSwap": true,
+    "disagreementIsTie": true
+  },
+  "stats": {
+    "bootstrapIterations": 2000,
+    "confidence": 0.95
+  }
+}
