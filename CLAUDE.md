@@ -10,6 +10,7 @@ npm run dev -- inventory <repo>          # list modules + sample preview
 npm run dev -- doctor                    # engine + scanner availability
 npm run dev -- score <repo>              # codebase vs pure-LLM (add --offline for no Codex)
 npm run dev -- skill <bench.json>        # skill vs plain prompting
+npm run dev -- linear --specs <dir>      # pull real Linear tickets → specs dir (LINEAR_API_KEY), then score --specs
 npm run dev -- history                   # uplift across runs
 npm run dev -- serve                     # portfolio dashboard on localhost (loopback only)
 npm test                                 # vitest; no LLM calls (fake engines)

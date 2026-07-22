@@ -10,11 +10,12 @@
  * ones (score/skill) return the RunResult too, so the caller can set an exit
  * code (CI) or keep chatting (REPL).
  */
-import { resolve } from 'node:path';
-import { writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
 import type { BenchConfig, RunResult } from './types.js';
 import { loadConfig } from './config.js';
 import { codexVersion } from './engine/codex.js';
+import { createLinearTransport, pullLinearSpecs, type PullResult } from './stages/linear.js';
 import { inventory, sampleModules } from './stages/inventory.js';
 import { detectTools } from './stages/deterministic.js';
 import { runPipeline } from './pipeline.js';
@@ -30,6 +31,9 @@ export async function doctorReport(): Promise<string> {
   lines.push(`codex CLI     ${codex ? `OK (${codex})` : 'MISSING — install: npm i -g @openai/codex'}`);
   lines.push(`node          OK (${process.version})`);
   lines.push('complexity    OK (built-in, TS compiler API — always available)');
+  lines.push(
+    `LINEAR_API_KEY ${process.env.LINEAR_API_KEY ? 'set — real-ticket specs enabled (`2bench linear`)' : 'not set — optional; enables `2bench linear` (gold-standard specs)'}`,
+  );
   for (const tool of await detectTools()) {
     const status = tool.found
       ? `OK (${tool.version ?? '?'})`
@@ -147,6 +151,62 @@ export async function benchSkill(benchPath: string, opts: SkillOptions = {}): Pr
     onProgress: opts.onProgress,
   });
   return finishRun(result, outDir);
+}
+
+export interface LinearPullOptions {
+  specs?: string;
+  team?: string;
+  project?: string;
+  label?: string;
+  since?: string;
+  map?: string;
+  labelPrefix?: string;
+  onProgress?: (m: string) => void;
+}
+
+/** Pull Linear tickets into a --specs directory (see src/stages/linear.ts for the design). */
+export async function linearPull(opts: LinearPullOptions = {}): Promise<{ result: PullResult; summary: string }> {
+  const apiKey = process.env.LINEAR_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'LINEAR_API_KEY is not set. Create a personal API key in Linear (Settings → Security & access → API) and export it, e.g. `export LINEAR_API_KEY=lin_api_...`',
+    );
+  }
+  const specsDir = resolve(opts.specs ?? 'specs');
+  const map = opts.map ? (JSON.parse(await readFile(resolve(opts.map), 'utf8')) as Record<string, string>) : undefined;
+
+  // `--since auto` resumes from the last sync checkpoint.
+  let since = opts.since;
+  if (since === 'auto') {
+    since = await readFile(join(specsDir, '.linear-sync.json'), 'utf8')
+      .then((t) => (JSON.parse(t) as { lastSyncedAt?: string }).lastSyncedAt)
+      .catch(() => undefined);
+  }
+
+  const transport = createLinearTransport(apiKey);
+  const result = await pullLinearSpecs(transport, {
+    specsDir,
+    team: opts.team,
+    project: opts.project,
+    label: opts.label,
+    since,
+    map,
+    labelPrefix: opts.labelPrefix,
+    onProgress: opts.onProgress,
+  });
+
+  const summary = [
+    `Pulled ${result.issues} issue(s) → wrote ${result.modulesWritten} module spec(s) to ${specsDir}`,
+    result.skippedUnmapped
+      ? `Skipped ${result.skippedUnmapped} unmapped issue(s) — tag them \`${opts.labelPrefix ?? 'spec:'}<module/path>\` or add a --map entry.`
+      : '',
+    result.lastSyncedAt ? `Checkpoint saved (${result.lastSyncedAt}); next time use --since auto for an incremental sync.` : '',
+    `Next: score against them with  2bench score <repo> --specs ${opts.specs ?? 'specs'}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return { result, summary };
 }
 
 /** Shared tail: persist score.json + report.html, append history, render summary. */

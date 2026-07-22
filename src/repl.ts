@@ -25,7 +25,7 @@ import {
   type ConciergeReply,
   type ConciergeTurn,
 } from './agent/concierge.js';
-import { doctorReport, inventoryReport, historyReport, scoreRepo, benchSkill } from './commands.js';
+import { doctorReport, inventoryReport, historyReport, scoreRepo, benchSkill, linearPull } from './commands.js';
 import { readHistory } from './history.js';
 import { serveDashboard, type ServeHandle } from './serve.js';
 import { runProcess } from './engine/proc.js';
@@ -203,6 +203,9 @@ async function handleSlash(
         (text) => (state.last = { kind: 'inventory', text }),
       );
       return false;
+    case 'linear':
+      await runLinear(args);
+      return false;
     case 'history':
       await runHistory(args[0] ?? dirs[0]!, state);
       return false;
@@ -366,6 +369,32 @@ function printRunOutput(
   }
   stdout.write(c.dim(`\n  Wrote ${jsonPath}\n  Wrote ${htmlPath}\n`));
   stdout.write('  ' + c.dim('Ask me to “explain that”, or open the dashboard: ') + c.cyan('/serve') + '\n');
+}
+
+async function runLinear(args: string[]): Promise<void> {
+  const flag = (name: string): string | undefined => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const specs = flag('specs') ?? 'specs';
+  const spinner = new Spinner('pulling Linear tickets…').start();
+  try {
+    const { summary } = await linearPull({
+      specs,
+      team: flag('team'),
+      project: flag('project'),
+      label: flag('label'),
+      since: flag('since'),
+      map: flag('map'),
+      labelPrefix: flag('label-prefix'),
+      onProgress: (m) => spinner.setLabel(m),
+    });
+    spinner.stop(c.green('✔'), 'pulled Linear tickets');
+    stdout.write('\n' + summary + '\n\n');
+  } catch (err) {
+    spinner.fail('pulling Linear tickets');
+    stdout.write(c.yellow(`  ${err instanceof Error ? err.message : String(err)}\n\n`));
+  }
 }
 
 async function runHistory(dir: string, state: ReplState): Promise<void> {

@@ -87,11 +87,14 @@ npm run dev -- doctor                            # check codex CLI + scanner ava
 npm run dev -- score <path-to-repo>              # full evaluation → score.json + report.html
 npm run dev -- score <path-to-repo> --offline    # zero Codex calls (deterministic/health only)
 npm run dev -- skill <bench.json>                # score a SKILL against plain prompting
+npm run dev -- linear --specs specs --team ERP   # pull real Linear tickets → specs/ (then score --specs specs)
 npm run dev -- history                           # how uplift has moved across runs
 npm run dev -- serve                             # portfolio dashboard on localhost (loopback only)
 ```
 
 Useful flags: `--sample <n>` (modules to sample), `--seed <n>`, `--config <path>`, `--out <dir>`, `--specs <dir>` (externally-authored specs — the honest apples-to-apples mode).
+
+**Real specs from Linear.** `2bench linear` pulls issues via the Linear API and writes the `--specs` JSONs for you — the gold-standard spec source that defeats spec-circularity (a ticket written before the code can't have been traced from it). Auth via `LINEAR_API_KEY`; map issues to modules with a `spec:<module/path>` label (or a `--map` file); resume big workspaces incrementally with `--since auto`. The loader is decoupled from scoring (resumable, offline-scoreable) and its transport is injected, so the same seam extends to Jira / GitHub Issues.
 
 Requires Node ≥ 20 and the [OpenAI Codex CLI](https://developers.openai.com/codex) (`npm i -g @openai/codex`, authenticated) as the generation/judging engine — flat-subscription usage makes demo runs ≈ $0 marginal. Optional scanners (`doctor` lists them): jscpd, ESLint, Semgrep, gitleaks — each missing one skips its sub-score rather than failing.
 

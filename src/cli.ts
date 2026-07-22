@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import { resolve } from 'node:path';
 import { writeFile } from 'node:fs/promises';
-import { doctorReport, inventoryReport, historyReport, scoreRepo, benchSkill } from './commands.js';
+import { doctorReport, inventoryReport, historyReport, scoreRepo, benchSkill, linearPull } from './commands.js';
 import { exitCodeFor } from './report/json-report.js';
 import { discoverHistories } from './history.js';
 import { renderDashboard } from './report/dashboard.js';
@@ -84,6 +84,26 @@ program
     console.log(summary);
     console.log(`\nWrote ${jsonPath}\nWrote ${htmlPath}`);
     process.exitCode = exitCodeFor(result);
+  });
+
+program
+  .command('linear')
+  .description('Pull real Linear tickets into a --specs directory (the gold-standard, circularity-free spec source)')
+  .option('--specs <dir>', 'output directory for spec JSONs', 'specs')
+  .option('--team <key>', 'Linear team key, e.g. ERP')
+  .option('--project <name>', 'Linear project name')
+  .option('--label <name>', 'only issues carrying this label')
+  .option('--since <iso>', 'only issues updated since (ISO timestamp), or "auto" to resume the last sync')
+  .option('--map <file>', 'JSON file mapping a label or project name → module path')
+  .option('--label-prefix <p>', 'label convention prefix for per-issue mapping', 'spec:')
+  .action(async (opts: { specs: string; team?: string; project?: string; label?: string; since?: string; map?: string; labelPrefix?: string }) => {
+    try {
+      const { summary } = await linearPull({ ...opts, onProgress: (m) => console.error(`  ${m}`) });
+      console.log(summary);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 2;
+    }
   });
 
 program

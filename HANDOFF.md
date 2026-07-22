@@ -5,7 +5,7 @@
 ## Current state (updated 2026-07-17, Phase 0 complete)
 
 - ✅ Research + methodology locked: `docs/research-report.md` (don't relitigate the invariants in `docs/architecture.md` without new evidence).
-- ✅ **170 tests pass, typecheck clean, 0 npm audit findings.** Clean commit history (`git log`).
+- ✅ **197 tests pass, typecheck clean, 0 npm audit findings.** Clean commit history (`git log`).
 - ✅ **ALL core tasks done:** proc runner, D2 scanners, D3 consistency, **D1 executed test harness** (spec-derived suite, subject-merging child runner, runs both sides differentially, feeds correctness + behavioral stability, cached by spec hash, runs even offline when cached), mapping/aggregation, P1 pipeline (full + `--offline` + resume + `--specs`), R1 HTML report, S1 cluster-aware bootstrap, J1 judge truncation, X1 external specs + leakage check.
 - ✅ **Interactive agent (front door):** `2bench` with no args launches a friendly REPL (`src/repl.ts`) — banner, command list, and a Codex-backed concierge (`src/agent/concierge.ts`) that answers newcomers in plain English and *proposes* commands the user confirms before running. Slash-commands and CLI flags share one command layer (`src/commands.ts`) so they can't diverge; the concierge may only ever suggest a command in the catalog (`src/agent/catalog.ts`) — unknown suggestions are dropped, never executed. Real-Codex validated end-to-end.
 - ✅ Real-Codex validation on a fixture module (see below).
@@ -24,8 +24,13 @@ Add a second-family judge (Claude CLI headless) with majority vote. Deferred bec
 ### J3 — judge batching
 Batch the 4 dimensions into one call per direction (cost ÷4) — only after verifying batched verdicts match unbatched on a few real modules.
 
-### X2 — Linear API loader
-`--specs` takes a directory of JSON files today; add a direct Linear export/API fetch that writes that directory.
+### X2 — Linear API loader ✅
+`2bench linear` pulls issues via the Linear GraphQL API and writes the `--specs`
+JSONs (`src/stages/linear.ts`). Decoupled loader (fetch ≠ score, so resumable/
+offline-scoreable); injectable transport (unit-tested, no network, extends to
+Jira/GitHub); cursor pagination; incremental `--since auto` checkpoint; 429
+backoff; declarative `spec:<path>` label mapping (or a `--map` file); multiple
+tickets merge into one module spec. Auth via `LINEAR_API_KEY` (env, never argv).
 
 ### D1b — suite-fidelity guard (finding from the 2026-07-17 self-run)
 Scoring 2bench with itself exposed an asymmetry in D1 when specs are *extracted*:

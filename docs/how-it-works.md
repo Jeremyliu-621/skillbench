@@ -83,7 +83,7 @@ Here's what happens when you score a codebase. Each step has a plain-English "wh
 
 **Step 3 — Get the recipe card (spec).** For each sampled module, 2bench needs a plain description of what it's supposed to do. There are two ways to get it:
 - **The good way:** feed it the *real* tickets your team wrote (e.g. from Linear, a task-tracking tool). These are the true, independently-written recipe cards. You pass these with `--specs`.
-- **The fallback way:** if you don't have tickets, 2bench reads your code and *guesses* the recipe. This works, but it's flagged as less trustworthy — and section 7 explains exactly why.
+- **The fallback way:** if you don't have tickets, 2bench reads your code and *guesses* the recipe. This works, but it's flagged as less trustworthy — see **"What if you don't have real tickets?"** just below, and section 7 for the deeper trap.
 
 **Step 4 — Bake the box mix (regenerate the baseline).** 2bench hands the recipe card to a plain AI (via **Codex**, the AI engine it uses) and says: "Build this from scratch. You get the spec and nothing else — no peeking at the real code." It does this **several times** with slightly reworded prompts, because asking an AI once is unreliable — like a student who aces a test one day and bombs it the next. Multiple tries give a stable picture of what the plain AI *typically* produces.
 *Why:* One sample from an AI is noise. Many samples reveal the real average — and also reveal how *consistent* the plain AI is, which becomes a score of its own (see "consistency" below).
@@ -93,6 +93,24 @@ Here's what happens when you score a codebase. Each step has a plain-English "wh
 **Step 6 — Do the math and produce the verdict.** Combine all the scores into one **uplift %**, wrap it in an honesty check (section 8), compare it to the 40% bar, and write two things: a machine-readable result (for automation) and a nice human-readable report (for people and clients).
 
 That's the pipeline: **inventory → sample → spec → rebuild → judge → math → report.**
+
+### What if you don't have real tickets?
+
+**Short version: 2bench still runs — it just switches to "guess mode" for the recipe card, and it's upfront about the downgrade.**
+
+When you *don't* hand it real tickets, 2bench reads each module's code and writes the spec *from* it. It's deliberately told to describe only *what the module does* — the business rules, the inputs and outputs — and to ignore the actual code (no function names, no libraries, no structure). The goal is a recipe card at the "what," not the "how," altitude. A spec made this way is tagged **extracted** (real tickets are tagged **linear**), and the report labels the whole run as extracted so nobody mistakes it for the gold-standard mode.
+
+The catch is the **recipe-card trap** from section 7: a spec traced from your own code can quietly leave out things your code *does* but the words don't capture — and then the rebuilt "box mix" is judged against that same incomplete card, which can make *your* (better) code look worse. So guess-mode is genuinely **less trustworthy** than real tickets.
+
+Because of that, whenever it has to guess, 2bench adds three safety nets:
+
+1. **A leakage check.** It measures how much of the "spec" is just vocabulary lifted straight out of your code's names. High overlap means the spec is peeking at the implementation — and that gets flagged.
+2. **A suite-fidelity guard.** If your real code suddenly scores *far below* the AI's rebuild on the tests — the tell-tale sign of an unfair, incomplete spec — 2bench stops trusting that correctness number, hands that module to the human-judgment path instead, and warns you in the report.
+3. **Honest labeling everywhere.** The run, the saved history entry, and the report all say "extracted spec," so the caveat travels with the number.
+
+**Bottom line:** guess-mode is fine for a quick self-check or a rough read. But for a number you'll actually put in front of a client, feed it the **real tickets** (`--specs <folder>`) — that's the honest, apples-to-apples mode where the recipe card is genuinely independent of both sides. If your team uses **Linear**, `2bench linear` pulls those tickets and writes the `--specs` files for you, so getting to the trustworthy mode is one command.
+
+*(Good to know: the **skill** mode never has this problem. There, the task prompts you write **are** the spec — independent by construction — so there's nothing to guess.)*
 
 ---
 
@@ -108,6 +126,22 @@ Every contestant is scored on four **dimensions**. Here's each in plain terms, a
 | **Consistency** | Does it produce *reliable* results, or is it all over the place from one run to the next? | 15% | How much the AI's multiple rebuilds *varied* from each other. Lots of variation = low consistency. |
 
 The single most important design choice here: **correctness is decided by tests that literally execute the code**, not by an AI's opinion. An AI *guessing* whether code works is unreliable; a test that runs and passes (or fails) is a fact. 2bench leans on facts wherever it possibly can, and only uses AI judgment for the genuinely subjective stuff.
+
+### Under the hood: how each score is measured
+
+Here's what's actually happening behind each of the four, still in plain terms.
+
+**Correctness — tests written from the spec, run for real.**
+2bench turns the recipe card into an actual **test suite** — a batch of little checks like "given input X, the answer must be Y," "an empty list returns 0," "a bad input must raise an error." Those tests come from the *spec*, not from your code, so they're neutral. It then runs the **same** suite against both your code and the AI's rebuild, and the score is simply the **fraction of tests that pass**. The suite is deliberately padded with tricky edge cases, because a thin set of tests makes *everything* look correct. And because both sides face the identical suite, when they disagree the **test** decides — your code isn't assumed right just for being the real one. *(There's an optional, tougher check on the roadmap — "mutation testing" — that grades the tests themselves by deliberately breaking the code to see whether a test notices.)*
+
+**Security — automated scanners for known-dangerous patterns and leaked secrets.**
+Two tools comb both versions. One (**Semgrep**) looks for known dangerous patterns — the mistakes attackers exploit, like a page that doesn't sanitize user input. Each finding is weighted by how serious its category is, and the score is essentially "how few serious problems per line." The other (**gitleaks**) hunts for **secrets left in the code** — passwords, API keys, tokens — and *any* of those is surfaced as its own loud red flag, not quietly averaged away. If a scanner isn't installed, this score is honestly marked **"not measured"** rather than faked to zero (the "degrade loudly" rule) — which is exactly why security showed as missing in your `/doctor` run on Windows.
+
+**Maintainability — three cheap, objective health checks, averaged.**
+Up to three sub-checks, whichever are available: **complexity** (how tangled the code is — and it looks at the *share of code sitting in overly-complex files*, not the average, because averages hide the few monster files that actually hurt); **duplication** (how much is copy-pasted); and **style/lint** (how many style-rule violations per line). All three are objective and reproducible — run them twice, get the same answer.
+
+**Consistency — does it give the same result twice?**
+This one's a little different from the others. Your **delivered** code is a fixed thing — it doesn't change between runs, so it's perfectly consistent. The one really on trial here is the **plain AI**: remember it rebuilt the module several times back in Step 4. 2bench measures how much those rebuilds **varied** — both how similar the code is across the tries, and whether they *behave* the same (do they pass the same tests?). Lots of variation = low consistency. This captures something genuinely valuable about shipped software: it's the same every time, whereas re-prompting a plain AI is a roll of the dice.
 
 ---
 
@@ -254,6 +288,7 @@ If you remember only one sentence: **2bench is a fair, repeatable, deliberately-
 - **Degrade loudly:** if something can't be measured, mark it "not measured" and warn — never fake a zero.
 - **Information parity:** both sides get *identical* information, so neither has an unfair edge.
 - **Spec circularity:** the trap where a spec guessed from your code quietly rigs the test against your code; avoided by using real tickets, and flagged when unavoidable.
+- **Extracted vs. real (Linear) spec:** an *extracted* spec is guessed from your code (the fallback, flagged as less trustworthy); a *real / Linear* spec comes from independently-written tickets (the honest, apples-to-apples mode passed with `--specs`).
 - **Seeded / reproducible:** "random" choices use a fixed starting number so runs are repeatable and can't be cherry-picked.
 - **Skill:** a reusable set of AI instructions (house rules / a template) that you can also put in the bake-off.
 - **Treatment vs control:** in a skill test, the run *with* the skill vs the run *without* it — the skill is the only difference.

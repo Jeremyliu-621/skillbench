@@ -46,6 +46,11 @@ export const COMMANDS: readonly CommandDoc[] = [
     costly: true,
   },
   {
+    name: 'linear',
+    usage: 'linear --specs <dir> [--team KEY] [--label spec]',
+    summary: 'Pull real Linear tickets into a specs folder — the gold-standard spec source that defeats spec circularity.',
+  },
+  {
     name: 'history',
     usage: 'history [dir]',
     summary: 'Show how the uplift score has moved across runs (the LLM baseline is a moving target).',
